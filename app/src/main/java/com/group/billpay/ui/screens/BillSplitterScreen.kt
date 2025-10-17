@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -19,21 +20,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.group.billpay.data.model.*
-
 import com.group.billpay.ui.theme.BillpayTheme
 import com.group.billpay.ui.viewmodel.BillSplitterViewModel
 import java.text.NumberFormat
 import java.util.Locale
 
-// Perubahan: Tambahkan parameter navController untuk navigasi
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BillSplitterScreen(
     viewModel: BillSplitterViewModel = viewModel(),
-    onNavigateToBill: (Long) -> Unit // Fungsi untuk berpindah layar
+    onNavigateToBill: (Long) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var newParticipantName by remember { mutableStateOf("") }
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -50,8 +50,9 @@ fun BillSplitterScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(vertical = 16.dp)
         ) {
             item {
                 ParticipantInputSection(
@@ -72,8 +73,10 @@ fun BillSplitterScreen(
                 BillListSection(
                     bills = uiState.bills,
                     onAddBillClicked = {
-                        viewModel.addBill()
-                        // TODO: Navigasi ke bill yang baru dibuat
+                        val newBillId = viewModel.addBill()
+                        if (newBillId != -1L) {
+                            onNavigateToBill(newBillId)
+                        }
                     },
                     onBillClicked = { bill ->
                         onNavigateToBill(bill.id)
@@ -90,8 +93,9 @@ fun BillSplitterScreen(
 
             item {
                 Button(
-                    onClick = { /* TODO: Panggil fungsi export PDF */ },
-                    modifier = Modifier.fillMaxWidth()
+                    onClick = { viewModel.exportToPdf(context) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = uiState.summary.isNotEmpty()
                 ) {
                     Text("Export ke PDF")
                 }
@@ -100,7 +104,7 @@ fun BillSplitterScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ParticipantInputSection(
     participants: List<Participant>,
@@ -109,7 +113,6 @@ fun ParticipantInputSection(
     onAddParticipant: () -> Unit,
     onRemoveParticipant: (Participant) -> Unit
 ) {
-    // ... Tidak ada perubahan di fungsi ini ...
     Card(elevation = CardDefaults.cardElevation(2.dp)) {
         Column(
             modifier = Modifier
@@ -117,11 +120,12 @@ fun ParticipantInputSection(
                 .padding(16.dp)
         ) {
             Text("Peserta", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(12.dp))
 
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 participants.forEach { participant ->
                     InputChip(
@@ -150,7 +154,7 @@ fun ParticipantInputSection(
                     singleLine = true
                 )
                 Spacer(Modifier.width(8.dp))
-                Button(onClick = onAddParticipant) {
+                Button(onClick = onAddParticipant, enabled = newParticipantName.isNotBlank()) {
                     Text("Tambah")
                 }
             }
@@ -158,7 +162,6 @@ fun ParticipantInputSection(
     }
 }
 
-// Perubahan besar: Fungsi ini sekarang lebih interaktif
 @Composable
 fun BillListSection(
     bills: List<Bill>,
@@ -221,10 +224,11 @@ fun BillListSection(
 
 @Composable
 fun SummarySection(summary: Map<Participant, BalanceSummary>) {
-    // ... Tidak ada perubahan di fungsi ini ...
     val rupiahFormat = remember {
         NumberFormat.getCurrencyInstance(Locale("in", "ID")).apply {
-            maximumFractionDigits = 0
+            // V V V PERBAIKAN DI SINI V V V
+            maximumFractionDigits = 0 // <-- Hapus semua angka di belakang koma
+            // ^ ^ ^ -------------------- ^ ^ ^
         }
     }
 
@@ -235,38 +239,78 @@ fun SummarySection(summary: Map<Participant, BalanceSummary>) {
                 .padding(16.dp)
         ) {
             Text("Hasil Akhir Pembagian", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
 
-            Row(Modifier.background(Color.LightGray.copy(alpha = 0.3f))) {
-                Text("Peserta", Modifier.weight(1.5f).padding(8.dp), fontWeight = FontWeight.Bold)
-                Text("Tagihan", Modifier.weight(1f).padding(8.dp), fontWeight = FontWeight.Bold, textAlign = TextAlign.End)
-                Text("Bayar", Modifier.weight(1f).padding(8.dp), fontWeight = FontWeight.Bold, textAlign = TextAlign.End)
-                Text("Saldo", Modifier.weight(1f).padding(8.dp), fontWeight = FontWeight.Bold, textAlign = TextAlign.End)
+            // Header Tabel
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .padding(vertical = 8.dp)
+            ) {
+                Text("Peserta", Modifier.weight(1.5f).padding(start = 8.dp), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("Tagihan", Modifier.weight(1.1f), fontWeight = FontWeight.Bold, textAlign = TextAlign.End, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("Bayar", Modifier.weight(1.1f), fontWeight = FontWeight.Bold, textAlign = TextAlign.End, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("Saldo", Modifier.weight(1.3f).padding(end = 8.dp), fontWeight = FontWeight.Bold, textAlign = TextAlign.End, color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
 
-            summary.forEach { (participant, balance) ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(participant.name, Modifier.weight(1.5f).padding(8.dp))
-                    Text(rupiahFormat.format(balance.totalBill), Modifier.weight(1f).padding(8.dp), textAlign = TextAlign.End)
-                    Text(rupiahFormat.format(balance.totalPaid), Modifier.weight(1f).padding(8.dp), textAlign = TextAlign.End)
-                    Text(
-                        text = rupiahFormat.format(balance.finalBalance),
-                        modifier = Modifier.weight(1f).padding(8.dp),
-                        color = if (balance.finalBalance < 0) MaterialTheme.colorScheme.error else Color(0xFF006400), // DarkGreen
-                        textAlign = TextAlign.End
-                    )
+            // Isi Tabel
+            if (summary.isEmpty()) {
+                Text(
+                    "Tambahkan bill dan peserta untuk melihat ringkasan.",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 16.dp),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray
+                )
+            } else {
+                summary.forEach { (participant, balance) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(participant.name, Modifier.weight(1.5f).padding(start = 8.dp), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            text = rupiahFormat.format(balance.totalBill),
+                            modifier = Modifier.weight(1.1f),
+                            textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        Text(
+                            text = rupiahFormat.format(balance.totalPaid),
+                            modifier = Modifier.weight(1.1f),
+                            textAlign = TextAlign.End,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        Text(
+                            text = rupiahFormat.format(balance.finalBalance),
+                            modifier = Modifier.weight(1.3f).padding(end = 8.dp),
+                            color = when {
+                                balance.finalBalance < 0 -> MaterialTheme.colorScheme.error
+                                balance.finalBalance > 0 -> Color(0xFF006400) // DarkGreen
+                                else -> MaterialTheme.colorScheme.onSurface
+                            },
+                            textAlign = TextAlign.End,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    Divider()
                 }
-                Divider()
             }
         }
     }
 }
 
+
 @Preview(showBackground = true)
 @Composable
 fun BillSplitterScreenPreview() {
     BillpayTheme {
-        // Preview tidak bisa menangani navigasi, jadi kita buat simpel
         BillSplitterScreen(onNavigateToBill = {})
     }
 }

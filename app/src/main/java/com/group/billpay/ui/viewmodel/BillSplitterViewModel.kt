@@ -43,7 +43,10 @@ class BillSplitterViewModel(application: Application) : AndroidViewModel(applica
                     shares = data.shares
                 )
 
-                val summaryMapByParticipant = summaryMapById.mapKeys { entry ->
+                // Filter agar hanya menampilkan peserta yang masih ada
+                val validSummary = summaryMapById.filterKeys { id -> data.participants.any { it.id == id } }
+
+                val summaryMapByParticipant = validSummary.mapKeys { entry ->
                     data.participants.find { it.id == entry.key }!!
                 }
 
@@ -86,16 +89,27 @@ class BillSplitterViewModel(application: Application) : AndroidViewModel(applica
         saveData()
     }
 
+    // --- FUNGSI YANG DIPERBAIKI ---
     fun removeParticipant(participant: Participant) {
         if (_sessionData.value == null) return
         val currentData = _sessionData.value!!
+
+        val updatedParticipants = currentData.participants - participant
+        // Hapus semua pembagian item yang melibatkan peserta ini
+        val updatedShares = currentData.shares.filterNot { it.participantId == participant.id }
+        // Hapus status "Payer" jika peserta ini yang membayar
+        val updatedBills = currentData.bills.map {
+            if (it.payerId == participant.id) it.copy(payerId = null) else it
+        }
+
         _sessionData.value = currentData.copy(
-            participants = currentData.participants - participant,
-            // Juga hapus peserta dari semua pembagian item
-            shares = currentData.shares.filterNot { it.participantId == participant.id }
+            participants = updatedParticipants,
+            shares = updatedShares,
+            bills = updatedBills
         )
         saveData()
     }
+    // --- AKHIR FUNGSI YANG DIPERBAIKI ---
 
     fun addBill(): Long {
         if (_sessionData.value == null) return -1
@@ -146,7 +160,6 @@ class BillSplitterViewModel(application: Application) : AndroidViewModel(applica
             id = (currentData.items.maxOfOrNull { it.id } ?: 0L) + 1,
             billId = billId, name = itemName, price = price, quantity = quantity
         )
-        // Default: item baru dibagi rata untuk semua peserta
         val newShares = currentData.participants.map { participant ->
             ItemShare(itemId = newItem.id, participantId = participant.id)
         }
@@ -162,7 +175,7 @@ class BillSplitterViewModel(application: Application) : AndroidViewModel(applica
         val currentData = _sessionData.value!!
         _sessionData.value = currentData.copy(
             items = currentData.items - item,
-            shares = currentData.shares.filterNot { it.itemId == item.id } // Hapus juga pembagiannya
+            shares = currentData.shares.filterNot { it.itemId == item.id }
         )
         saveData()
     }
@@ -170,13 +183,23 @@ class BillSplitterViewModel(application: Application) : AndroidViewModel(applica
     fun updateItemSharing(itemId: Long, selectedParticipantIds: List<Long>) {
         if (_sessionData.value == null) return
         val currentData = _sessionData.value!!
-        // Hapus share lama untuk item ini, lalu tambahkan yang baru
         val otherShares = currentData.shares.filterNot { it.itemId == itemId }
         val newShares = selectedParticipantIds.map { participantId ->
             ItemShare(itemId = itemId, participantId = participantId)
         }
         _sessionData.value = currentData.copy(shares = otherShares + newShares)
         saveData()
+    }
+
+    fun exportToPdf(context: android.content.Context) {
+        val state = _uiState.value
+        if (state.summary.isNotEmpty()) {
+            com.group.billpay.domain.exporter.PdfExporter.createAndSharePdf(
+                context = context,
+                sessionName = state.sessionName,
+                summaryData = state.summary
+            )
+        }
     }
 
     private fun createInitialDummyData(): SessionData {
